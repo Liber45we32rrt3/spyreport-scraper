@@ -22,7 +22,7 @@ def scrape():
             if precio_el:
                 precio_tag = precio_el.find(class_='js-price-display')
                 precio = precio_tag.get('data-product-price', '0') if precio_tag else '0'
-                stock_tag = precio_el.find(class_='js-add-to-cart-button')
+                stock_tag = precio_el.find(class_='js-addtocart')
                 stock = 'InStock' if stock_tag else 'OutOfStock'
             else:
                 precio = '0'
