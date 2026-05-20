@@ -16,16 +16,16 @@ def scrape():
         soup = BeautifulSoup(res.text, 'html.parser')
         
         productos = []
-        for item in soup.select('.js-item-name'):
-            nombre = item.get_text(strip=True)
-            contenedor = item.find_parent('div', class_=lambda c: c and 'item' in c)
-            if not contenedor:
-                contenedor = item.find_parent()
+        for contenedor in soup.select('.js-item-product'):
+            nombre_tag = contenedor.find(class_='js-item-name')
+            if not nombre_tag:
+                continue
+            nombre = nombre_tag.get_text(strip=True)
             
-            precio_tag = contenedor.find(class_='js-price-display') if contenedor else None
+            precio_tag = contenedor.find(class_='js-price-display')
             precio = precio_tag.get('data-product-price', '0') if precio_tag else '0'
             
-            stock_tag = contenedor.find(class_='js-addtocart') if contenedor else None
+            stock_tag = contenedor.find(class_='js-addtocart')
             stock = 'InStock' if stock_tag else 'OutOfStock'
             
             if nombre:
