@@ -18,15 +18,15 @@ def scrape():
         productos = []
         for item in soup.select('.js-item-name'):
             nombre = item.get_text(strip=True)
-            precio_el = item.find_parent()
-            if precio_el:
-                precio_tag = precio_el.find(class_='js-price-display')
-                precio = precio_tag.get('data-product-price', '0') if precio_tag else '0'
-                stock_tag = precio_el.find(class_='js-addtocart')
-                stock = 'InStock' if stock_tag else 'OutOfStock'
-            else:
-                precio = '0'
-                stock = 'OutOfStock'
+            contenedor = item.find_parent('div', class_=lambda c: c and 'item' in c)
+            if not contenedor:
+                contenedor = item.find_parent()
+            
+            precio_tag = contenedor.find(class_='js-price-display') if contenedor else None
+            precio = precio_tag.get('data-product-price', '0') if precio_tag else '0'
+            
+            stock_tag = contenedor.find(class_='js-addtocart') if contenedor else None
+            stock = 'InStock' if stock_tag else 'OutOfStock'
             
             if nombre:
                 productos.append({
