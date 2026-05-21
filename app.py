@@ -20,8 +20,7 @@ def scrape_page(url, headers):
         if nombre:
             productos.append({'name': nombre, 'price': precio, 'availability': stock, 'url': url})
     
-    # Detectar si hay página siguiente
-    next_page = soup.select_one('.js-next-page, a[rel="next"], .pagination .next a')
+    next_page = soup.select_one('.swiper-button-next')
     return productos, next_page
 
 @app.route('/scrape', methods=['GET'])
@@ -34,9 +33,10 @@ def scrape():
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         todos = []
         page = 1
+        base_url = url.rstrip('/')
         
-        while page <= 10:  # máximo 10 páginas
-            page_url = f"{url}?page={page}" if page > 1 else url
+        while page <= 21:
+            page_url = f"{base_url}/page/{page}/" if page > 1 else url
             productos, next_page = scrape_page(page_url, headers)
             if not productos:
                 break
