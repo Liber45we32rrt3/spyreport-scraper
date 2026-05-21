@@ -4,6 +4,26 @@ from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
+def scrape_page(url, headers):
+    res = requests.get(url, headers=headers, timeout=15)
+    soup = BeautifulSoup(res.text, 'html.parser')
+    productos = []
+    for contenedor in soup.select('.js-item-product'):
+        nombre_tag = contenedor.find(class_='js-item-name')
+        if not nombre_tag:
+            continue
+        nombre = nombre_tag.get_text(strip=True)
+        precio_tag = contenedor.find(class_='js-price-display')
+        precio = precio_tag.get('data-product-price', '0') if precio_tag else '0'
+        stock_tag = contenedor.find(class_='js-addtocart')
+        stock = 'InStock' if stock_tag else 'OutOfStock'
+        if nombre:
+            productos.append({'name': nombre, 'price': precio, 'availability': stock, 'url': url})
+    
+    # Detectar si hay página siguiente
+    next_page = soup.select_one('.js-next-page, a[rel="next"], .pagination .next a')
+    return productos, next_page
+
 @app.route('/scrape', methods=['GET'])
 def scrape():
     url = request.args.get('url')
@@ -12,31 +32,20 @@ def scrape():
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        res = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.text, 'html.parser')
+        todos = []
+        page = 1
         
-        productos = []
-        for contenedor in soup.select('.js-item-product'):
-            nombre_tag = contenedor.find(class_='js-item-name')
-            if not nombre_tag:
-                continue
-            nombre = nombre_tag.get_text(strip=True)
-            
-            precio_tag = contenedor.find(class_='js-price-display')
-            precio = precio_tag.get('data-product-price', '0') if precio_tag else '0'
-            
-            stock_tag = contenedor.find(class_='js-addtocart')
-            stock = 'InStock' if stock_tag else 'OutOfStock'
-            
-            if nombre:
-                productos.append({
-                    'name': nombre,
-                    'price': precio,
-                    'availability': stock,
-                    'url': url
-                })
+        while page <= 10:  # máximo 10 páginas
+            page_url = f"{url}?page={page}" if page > 1 else url
+            productos, next_page = scrape_page(page_url, headers)
+            if not productos:
+                break
+            todos.extend(productos)
+            if not next_page:
+                break
+            page += 1
         
-        return jsonify(productos)
+        return jsonify(todos)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
