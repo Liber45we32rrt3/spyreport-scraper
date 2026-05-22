@@ -8,11 +8,11 @@ def scrape_with_playwright(url):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url, timeout=30000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2000)
         
-        for _ in range(10):
+        for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(1000)
         
         productos = []
         base_url = f"https://{url.split('/')[2]}"
