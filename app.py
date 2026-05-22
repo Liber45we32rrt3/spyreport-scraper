@@ -13,7 +13,7 @@ def scrape_with_playwright(url):
         prev_height = 0
         while True:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
             curr_height = page.evaluate("document.body.scrollHeight")
             if curr_height == prev_height:
                 break
