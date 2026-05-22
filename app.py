@@ -5,6 +5,15 @@ import requests
 
 app = Flask(__name__)
 
+def has_pagination(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        return soup.select_one('.swiper-button-next') is not None
+    except:
+        return False
+
 def scrape_page_static(url, headers):
     res = requests.get(url, headers=headers, timeout=15)
     soup = BeautifulSoup(res.text, 'html.parser')
@@ -63,13 +72,6 @@ def scrape_with_playwright(url):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(1000)
         
-        # Detectar si tiene paginación
-        has_pagination = page.query_selector('.swiper-button-next') is not None
-        
-        if has_pagination:
-            browser.close()
-            return scrape_with_pagination(url)
-        
         productos = []
         base_url = f"https://{url.split('/')[2]}"
         items = page.query_selector_all('.js-item-product')
@@ -102,7 +104,10 @@ def scrape():
         return jsonify({'error': 'URL requerida'}), 400
     
     try:
-        productos = scrape_with_playwright(url)
+        if has_pagination(url):
+            productos = scrape_with_pagination(url)
+        else:
+            productos = scrape_with_playwright(url)
         return jsonify(productos)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
