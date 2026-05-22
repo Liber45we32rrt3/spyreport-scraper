@@ -10,10 +10,9 @@ def scrape_with_playwright(url):
         page.goto(url, timeout=30000)
         page.wait_for_timeout(3000)
         
-        # Scrollear 20 veces para cargar todos los productos
         for _ in range(10):
-    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-    page.wait_for_timeout(1500)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(1500)
         
         productos = []
         items = page.query_selector_all('.js-item-product')
