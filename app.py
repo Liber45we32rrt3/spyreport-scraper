@@ -15,11 +15,17 @@ def scrape_with_playwright(url):
             page.wait_for_timeout(1500)
         
         productos = []
+        base_url = f"https://{url.split('/')[2]}"
         items = page.query_selector_all('.js-item-product')
         
         for item in items:
             nombre_el = item.query_selector('.js-item-name')
             nombre = nombre_el.inner_text().strip() if nombre_el else ''
+            
+            link_el = item.query_selector('a')
+            link = link_el.get_attribute('href') if link_el else ''
+            if link and not link.startswith('http'):
+                link = f"{base_url}{link}"
             
             precio_el = item.query_selector('.js-price-display')
             precio = precio_el.get_attribute('data-product-price') if precio_el else '0'
@@ -32,7 +38,7 @@ def scrape_with_playwright(url):
                     'name': nombre,
                     'price': precio or '0',
                     'availability': stock,
-                    'url': url
+                    'url': link or url
                 })
         
         browser.close()
