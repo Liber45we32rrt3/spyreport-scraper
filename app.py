@@ -8,16 +8,12 @@ def scrape_with_playwright(url):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url, timeout=30000)
+        page.wait_for_timeout(3000)
         
-        # Scrollear hasta abajo para cargar todos los productos
-        prev_height = 0
-        while True:
+        # Scrollear 20 veces para cargar todos los productos
+        for _ in range(20):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(3000)
-            curr_height = page.evaluate("document.body.scrollHeight")
-            if curr_height == prev_height:
-                break
-            prev_height = curr_height
+            page.wait_for_timeout(2000)
         
         productos = []
         items = page.query_selector_all('.js-item-product')
