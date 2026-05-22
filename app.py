@@ -1,7 +1,56 @@
 from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
+from bs4 import BeautifulSoup
+import requests
 
 app = Flask(__name__)
+
+def scrape_page_static(url, headers):
+    res = requests.get(url, headers=headers, timeout=15)
+    soup = BeautifulSoup(res.text, 'html.parser')
+    productos = []
+    base_url = f"https://{url.split('/')[2]}"
+    
+    for contenedor in soup.select('.js-item-product'):
+        nombre_tag = contenedor.find(class_='js-item-name')
+        if not nombre_tag:
+            continue
+        nombre = nombre_tag.get_text(strip=True)
+        
+        link_tag = contenedor.find('a')
+        link = link_tag.get('href', '') if link_tag else ''
+        if link and not link.startswith('http'):
+            link = f"{base_url}{link}"
+        
+        precio_tag = contenedor.find(class_='js-price-display')
+        precio = precio_tag.get('data-product-price', '0') if precio_tag else '0'
+        
+        stock_tag = contenedor.find(class_='js-addtocart')
+        stock = 'InStock' if stock_tag else 'OutOfStock'
+        
+        if nombre:
+            productos.append({'name': nombre, 'price': precio, 'availability': stock, 'url': link or url})
+    
+    next_page = soup.select_one('.swiper-button-next')
+    return productos, next_page
+
+def scrape_with_pagination(url):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    todos = []
+    page = 1
+    base_url = url.rstrip('/')
+    
+    while page <= 25:
+        page_url = f"{base_url}/page/{page}/" if page > 1 else url
+        productos, next_page = scrape_page_static(page_url, headers)
+        if not productos:
+            break
+        todos.extend(productos)
+        if not next_page:
+            break
+        page += 1
+    
+    return todos
 
 def scrape_with_playwright(url):
     with sync_playwright() as p:
@@ -13,6 +62,13 @@ def scrape_with_playwright(url):
         for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(1000)
+        
+        # Detectar si tiene paginación
+        has_pagination = page.query_selector('.swiper-button-next') is not None
+        
+        if has_pagination:
+            browser.close()
+            return scrape_with_pagination(url)
         
         productos = []
         base_url = f"https://{url.split('/')[2]}"
@@ -34,12 +90,7 @@ def scrape_with_playwright(url):
             stock = 'InStock' if stock_el else 'OutOfStock'
             
             if nombre:
-                productos.append({
-                    'name': nombre,
-                    'price': precio or '0',
-                    'availability': stock,
-                    'url': link or url
-                })
+                productos.append({'name': nombre, 'price': precio or '0', 'availability': stock, 'url': link or url})
         
         browser.close()
         return productos
