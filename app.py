@@ -27,37 +27,43 @@ def text_to_price(texto):
 
 def normalize_price(precio_str):
     """
-    Tienda Nube puede devolver precios en centavos (14500000 = $145.000)
-    o en pesos directos (240000 = $240.000).
-    Si el precio tiene 7+ dígitos y termina en 00, probablemente son centavos.
-    Heurística: si precio > 1.000.000 dividimos por 100.
+    Convierte siempre a pesos argentinos.
+    Si el precio tiene más de 6 dígitos, es centavos → dividir por 100.
+    Si tiene 6 o menos dígitos, ya está en pesos → no tocar.
+    Ejemplos:
+      16915000 → 169150 (Midway, centavos)
+      41900000 → 419000 (Esenzzia, centavos)
+      145000   → 145000 (Bomba, pesos directos)
+      240000   → 240000 (Bullbenny, pesos directos)
     """
     try:
         precio = int(precio_str)
-        if precio > 1000000:
+        if precio > 999999:  # más de 6 dígitos = centavos
             return str(precio // 100)
         return str(precio)
     except:
         return '0'
 
 def extract_price(contenedor):
-    # Método 1: data-product-price como atributo (perfumería)
+    # Método 1: data-product-price como atributo
     precio_tag = contenedor.find(class_='js-price-display')
     if precio_tag:
         precio = precio_tag.get('data-product-price', '0')
         if precio and precio != '0' and precio != 'None':
             return normalize_price(precio)
-        # Método 2: texto del span (ropa)
+        # Método 2: texto del span
         texto = precio_tag.get_text(strip=True)
         if texto and '$' in texto:
-            return text_to_price(texto)
+            raw = text_to_price(texto)
+            return normalize_price(raw)
     
     # Método 3: item-price class
     precio_tag2 = contenedor.find(class_='item-price')
     if precio_tag2:
         texto = precio_tag2.get_text(strip=True)
         if texto and '$' in texto:
-            return text_to_price(texto)
+            raw = text_to_price(texto)
+            return normalize_price(raw)
     
     # Método 4: data-price atributo
     for tag in contenedor.find_all(attrs={'data-price': True}):
