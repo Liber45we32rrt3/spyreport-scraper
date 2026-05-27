@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import requests
-import json
 import re
 
 app = Flask(__name__)
@@ -20,9 +19,7 @@ def text_to_price(texto):
     """Convierte texto de precio '$35.550,00' a centavos '3555000'"""
     if not texto:
         return '0'
-    # Remover símbolos y espacios
     limpio = texto.replace('$', '').replace(' ', '').strip()
-    # Formato argentino: $35.550,00 -> 3555000
     if ',' in limpio:
         limpio = limpio.replace('.', '').replace(',', '')
     else:
@@ -32,13 +29,13 @@ def text_to_price(texto):
 def extract_price(contenedor):
     """Extrae precio por múltiples métodos"""
     
-    # Método 1: data-product-price como atributo
+    # Método 1: data-product-price como atributo (perfumería)
     precio_tag = contenedor.find(class_='js-price-display')
     if precio_tag:
         precio = precio_tag.get('data-product-price', '0')
         if precio and precio != '0' and precio != 'None':
             return precio
-        # Método 2: texto del span (Midway y otras tiendas de ropa)
+        # Método 2: texto del span (ropa)
         texto = precio_tag.get_text(strip=True)
         if texto and '$' in texto:
             return text_to_price(texto)
@@ -55,15 +52,7 @@ def extract_price(contenedor):
         precio = tag.get('data-price', '0')
         if precio and precio != '0':
             return precio
-    
-    # Método 5: cualquier elemento con clase que contenga 'price'
-    for tag in contenedor.find_all(class_=re.compile(r'price', re.I)):
-        texto = tag.get_text(strip=True)
-        if texto and '$' in texto and len(texto) < 20:
-            converted = text_to_price(texto)
-            if converted != '0':
-                return converted
-    
+
     return '0'
 
 def scrape_page_static(url, headers):
@@ -126,7 +115,6 @@ def scrape_with_playwright(url):
         html = page.content()
         browser.close()
         
-        # Parsear con BeautifulSoup después de que JS renderizó
         soup = BeautifulSoup(html, 'html.parser')
         productos = []
         base_url = f"https://{url.split('/')[2]}"
