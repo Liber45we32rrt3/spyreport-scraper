@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import requests
-import re
 import time
 
 app = Flask(__name__)
@@ -26,13 +25,28 @@ def text_to_price(texto):
         limpio = limpio.replace('.', '')
     return limpio if limpio.isdigit() else '0'
 
+def normalize_price(precio_str):
+    """
+    Tienda Nube puede devolver precios en centavos (14500000 = $145.000)
+    o en pesos directos (240000 = $240.000).
+    Si el precio tiene 7+ dígitos y termina en 00, probablemente son centavos.
+    Heurística: si precio > 1.000.000 dividimos por 100.
+    """
+    try:
+        precio = int(precio_str)
+        if precio > 1000000:
+            return str(precio // 100)
+        return str(precio)
+    except:
+        return '0'
+
 def extract_price(contenedor):
     # Método 1: data-product-price como atributo (perfumería)
     precio_tag = contenedor.find(class_='js-price-display')
     if precio_tag:
         precio = precio_tag.get('data-product-price', '0')
         if precio and precio != '0' and precio != 'None':
-            return precio
+            return normalize_price(precio)
         # Método 2: texto del span (ropa)
         texto = precio_tag.get_text(strip=True)
         if texto and '$' in texto:
@@ -49,7 +63,7 @@ def extract_price(contenedor):
     for tag in contenedor.find_all(attrs={'data-price': True}):
         precio = tag.get('data-price', '0')
         if precio and precio != '0':
-            return precio
+            return normalize_price(precio)
 
     return '0'
 
@@ -87,10 +101,9 @@ def scrape_with_pagination(url):
     page = 1
     base_url = url.rstrip('/')
     start_time = time.time()
-    MAX_SECONDS = 80  # máximo 80 segundos en total
-    
+    MAX_SECONDS = 80
+
     while page <= 25:
-        # Si pasaron más de 80 segundos, paramos
         if time.time() - start_time > MAX_SECONDS:
             break
         
