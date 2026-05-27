@@ -16,44 +16,53 @@ def has_pagination(url):
     except:
         return False
 
-def extract_price_from_html(contenedor):
-    """Intenta extraer el precio por múltiples métodos"""
+def text_to_price(texto):
+    """Convierte texto de precio '$35.550,00' a centavos '3555000'"""
+    if not texto:
+        return '0'
+    # Remover símbolos y espacios
+    limpio = texto.replace('$', '').replace(' ', '').strip()
+    # Formato argentino: $35.550,00 -> 3555000
+    if ',' in limpio:
+        limpio = limpio.replace('.', '').replace(',', '')
+    else:
+        limpio = limpio.replace('.', '')
+    return limpio if limpio.isdigit() else '0'
+
+def extract_price(contenedor):
+    """Extrae precio por múltiples métodos"""
     
-    # Método 1: data-product-price en js-price-display
+    # Método 1: data-product-price como atributo
     precio_tag = contenedor.find(class_='js-price-display')
     if precio_tag:
         precio = precio_tag.get('data-product-price', '0')
-        if precio and precio != '0':
+        if precio and precio != '0' and precio != 'None':
             return precio
+        # Método 2: texto del span (Midway y otras tiendas de ropa)
+        texto = precio_tag.get_text(strip=True)
+        if texto and '$' in texto:
+            return text_to_price(texto)
     
-    # Método 2: data-price en cualquier elemento
+    # Método 3: item-price class
+    precio_tag2 = contenedor.find(class_='item-price')
+    if precio_tag2:
+        texto = precio_tag2.get_text(strip=True)
+        if texto and '$' in texto:
+            return text_to_price(texto)
+    
+    # Método 4: data-price atributo
     for tag in contenedor.find_all(attrs={'data-price': True}):
         precio = tag.get('data-price', '0')
         if precio and precio != '0':
             return precio
     
-    # Método 3: buscar en scripts JSON de variantes
-    scripts = contenedor.find_all('script')
-    for script in scripts:
-        if script.string and 'price' in script.string.lower():
-            try:
-                # Buscar patrones de precio en JSON
-                match = re.search(r'"price"\s*:\s*(\d+)', script.string)
-                if match:
-                    return match.group(1)
-            except:
-                pass
-    
-    # Método 4: buscar texto con formato de precio
-    precio_tag = contenedor.find(class_=re.compile(r'price|precio', re.I))
-    if precio_tag:
-        texto = precio_tag.get_text(strip=True)
-        # Extraer números del texto de precio
-        numeros = re.findall(r'[\d\.]+', texto.replace(',', '.'))
-        if numeros:
-            precio_limpio = numeros[0].replace('.', '')
-            if len(precio_limpio) > 2:  # evitar precios de 1-2 dígitos
-                return precio_limpio + '00'  # convertir a centavos
+    # Método 5: cualquier elemento con clase que contenga 'price'
+    for tag in contenedor.find_all(class_=re.compile(r'price', re.I)):
+        texto = tag.get_text(strip=True)
+        if texto and '$' in texto and len(texto) < 20:
+            converted = text_to_price(texto)
+            if converted != '0':
+                return converted
     
     return '0'
 
@@ -62,23 +71,6 @@ def scrape_page_static(url, headers):
     soup = BeautifulSoup(res.text, 'html.parser')
     productos = []
     base_url = f"https://{url.split('/')[2]}"
-    
-    # Intentar extraer precios del JSON global de la página
-    precios_json = {}
-    for script in soup.find_all('script'):
-        if script.string:
-            # Buscar objeto products o catalog en scripts
-            match = re.search(r'var\s+products\s*=\s*(\[.*?\]);', script.string, re.DOTALL)
-            if not match:
-                match = re.search(r'"variants"\s*:\s*(\[.*?\])', script.string, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group(1))
-                    for item in data if isinstance(data, list) else [data]:
-                        if isinstance(item, dict) and 'id' in item and 'price' in item:
-                            precios_json[str(item['id'])] = str(item['price'])
-                except:
-                    pass
     
     for contenedor in soup.select('.js-item-product'):
         nombre_tag = contenedor.find(class_='js-item-name')
@@ -91,14 +83,7 @@ def scrape_page_static(url, headers):
         if link and not link.startswith('http'):
             link = f"{base_url}{link}"
         
-        # Extraer precio con múltiples métodos
-        precio = extract_price_from_html(contenedor)
-        
-        # Si precio sigue siendo 0, buscar en data attributes del contenedor
-        if precio == '0':
-            product_id = contenedor.get('data-product-id', '')
-            if product_id and product_id in precios_json:
-                precio = precios_json[product_id]
+        precio = extract_price(contenedor)
         
         stock_tag = contenedor.find(class_='js-addtocart')
         stock = 'InStock' if stock_tag else 'OutOfStock'
@@ -132,109 +117,39 @@ def scrape_with_playwright(url):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url, timeout=30000)
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
         
-        # Scroll para cargar productos
         for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(1000)
         
-        # Intentar extraer precios del JSON global de la página
-        precios_json = {}
-        try:
-            scripts = page.query_selector_all('script')
-            for script in scripts:
-                content = script.inner_text()
-                if content and ('price' in content.lower() or 'precio' in content.lower()):
-                    # Buscar variantes con precios
-                    matches = re.findall(r'"price"\s*:\s*(\d+)', content)
-                    ids = re.findall(r'"id"\s*:\s*(\d+)', content)
-                    if matches and ids:
-                        for i, pid in enumerate(ids):
-                            if i < len(matches):
-                                precios_json[pid] = matches[i]
-        except:
-            pass
+        html = page.content()
+        browser.close()
         
+        # Parsear con BeautifulSoup después de que JS renderizó
+        soup = BeautifulSoup(html, 'html.parser')
         productos = []
         base_url = f"https://{url.split('/')[2]}"
-        items = page.query_selector_all('.js-item-product')
         
-        for item in items:
-            nombre_el = item.query_selector('.js-item-name')
-            nombre = nombre_el.inner_text().strip() if nombre_el else ''
+        for contenedor in soup.select('.js-item-product'):
+            nombre_tag = contenedor.find(class_='js-item-name')
+            if not nombre_tag:
+                continue
+            nombre = nombre_tag.get_text(strip=True)
             
-            link_el = item.query_selector('a')
-            link = link_el.get_attribute('href') if link_el else ''
+            link_tag = contenedor.find('a')
+            link = link_tag.get('href', '') if link_tag else ''
             if link and not link.startswith('http'):
                 link = f"{base_url}{link}"
             
-            # Método 1: data-product-price
-            precio = '0'
-            precio_el = item.query_selector('.js-price-display')
-            if precio_el:
-                precio = precio_el.get_attribute('data-product-price') or '0'
+            precio = extract_price(contenedor)
             
-            # Método 2: buscar data-price en cualquier elemento hijo
-            if precio == '0':
-                try:
-                    precio_data = item.evaluate("""el => {
-                        const priceEl = el.querySelector('[data-price]');
-                        if (priceEl) return priceEl.getAttribute('data-price');
-                        const priceEl2 = el.querySelector('[data-product-price]');
-                        if (priceEl2) return priceEl2.getAttribute('data-product-price');
-                        return '0';
-                    }""")
-                    if precio_data and precio_data != '0':
-                        precio = precio_data
-                except:
-                    pass
-            
-            # Método 3: buscar en JSON embebido del producto
-            if precio == '0':
-                try:
-                    precio_json = item.evaluate("""el => {
-                        const scripts = el.querySelectorAll('script');
-                        for (const s of scripts) {
-                            const match = s.textContent.match(/"price"\\s*:\\s*(\\d+)/);
-                            if (match) return match[1];
-                        }
-                        return '0';
-                    }""")
-                    if precio_json and precio_json != '0':
-                        precio = precio_json
-                except:
-                    pass
-            
-            # Método 4: buscar por product_id en JSON global
-            if precio == '0':
-                try:
-                    product_id = item.evaluate("el => el.getAttribute('data-product-id') || ''")
-                    if product_id and product_id in precios_json:
-                        precio = precios_json[product_id]
-                except:
-                    pass
-            
-            # Método 5: clickear primera variante si existe y capturar precio
-            if precio == '0':
-                try:
-                    variante = item.query_selector('.js-product-variants li:first-child, .js-variation-option:first-child, [data-variant-id]:first-child')
-                    if variante:
-                        variante.click()
-                        page.wait_for_timeout(500)
-                        precio_el2 = item.query_selector('.js-price-display')
-                        if precio_el2:
-                            precio = precio_el2.get_attribute('data-product-price') or '0'
-                except:
-                    pass
-            
-            stock_el = item.query_selector('.js-addtocart')
-            stock = 'InStock' if stock_el else 'OutOfStock'
+            stock_tag = contenedor.find(class_='js-addtocart')
+            stock = 'InStock' if stock_tag else 'OutOfStock'
             
             if nombre:
                 productos.append({'name': nombre, 'price': precio or '0', 'availability': stock, 'url': link or url})
         
-        browser.close()
         return productos
 
 @app.route('/scrape', methods=['GET'])
