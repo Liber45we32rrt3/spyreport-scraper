@@ -3,6 +3,7 @@ from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import requests
 import re
+import time
 
 app = Flask(__name__)
 
@@ -16,7 +17,6 @@ def has_pagination(url):
         return False
 
 def text_to_price(texto):
-    """Convierte texto de precio '$35.550,00' a centavos '3555000'"""
     if not texto:
         return '0'
     limpio = texto.replace('$', '').replace(' ', '').strip()
@@ -27,8 +27,6 @@ def text_to_price(texto):
     return limpio if limpio.isdigit() else '0'
 
 def extract_price(contenedor):
-    """Extrae precio por múltiples métodos"""
-    
     # Método 1: data-product-price como atributo (perfumería)
     precio_tag = contenedor.find(class_='js-price-display')
     if precio_tag:
@@ -56,7 +54,7 @@ def extract_price(contenedor):
     return '0'
 
 def scrape_page_static(url, headers):
-    res = requests.get(url, headers=headers, timeout=15)
+    res = requests.get(url, headers=headers, timeout=10)
     soup = BeautifulSoup(res.text, 'html.parser')
     productos = []
     base_url = f"https://{url.split('/')[2]}"
@@ -88,10 +86,20 @@ def scrape_with_pagination(url):
     todos = []
     page = 1
     base_url = url.rstrip('/')
+    start_time = time.time()
+    MAX_SECONDS = 80  # máximo 80 segundos en total
     
     while page <= 25:
+        # Si pasaron más de 80 segundos, paramos
+        if time.time() - start_time > MAX_SECONDS:
+            break
+        
         page_url = f"{base_url}/page/{page}/" if page > 1 else url
-        productos, next_page = scrape_page_static(page_url, headers)
+        try:
+            productos, next_page = scrape_page_static(page_url, headers)
+        except:
+            break
+        
         if not productos:
             break
         todos.extend(productos)
