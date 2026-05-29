@@ -38,7 +38,7 @@ def normalize_price(precio_str):
     """
     try:
         precio = int(precio_str)
-        if precio > 99999:  # más de 5 dígitos = centavos
+        if precio > 999999:  # más de 6 dígitos = centavos
             return str(precio // 100)
         return str(precio)
     except:
