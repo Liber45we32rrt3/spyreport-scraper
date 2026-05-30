@@ -6,6 +6,23 @@ import time
 
 app = Flask(__name__)
 
+# Tiendas que guardan precios en centavos (dividir por 100)
+TIENDAS_CENTAVOS = [
+    'esenzzia.com.ar',
+    'perfumistas.com.ar',
+    'benitoboutique.com.ar',
+    'midway.com.ar',
+    'bombaproject.com.ar',
+    'fraganciadecant.com.ar',
+    'minianima.com.ar',
+]
+
+def get_dominio(url):
+    try:
+        return url.split('/')[2].replace('www.', '')
+    except:
+        return ''
+
 def has_pagination(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -25,55 +42,41 @@ def text_to_price(texto):
         limpio = limpio.replace('.', '')
     return limpio if limpio.isdigit() else '0'
 
-def normalize_price(precio_str):
-    """
-    Convierte siempre a pesos argentinos.
-    Si el precio tiene más de 6 dígitos, es centavos → dividir por 100.
-    Si tiene 6 o menos dígitos, ya está en pesos → no tocar.
-    Ejemplos:
-      16915000 → 169150 (Midway, centavos)
-      41900000 → 419000 (Esenzzia, centavos)
-      145000   → 145000 (Bomba, pesos directos)
-      240000   → 240000 (Bullbenny, pesos directos)
-    """
+def normalize_price(precio_str, dominio):
     try:
         precio = int(precio_str)
-        if precio > 999999:  # más de 6 dígitos = centavos
+        if dominio in TIENDAS_CENTAVOS:
             return str(precio // 100)
         return str(precio)
     except:
         return '0'
 
-def extract_price(contenedor):
-    # Método 1: data-product-price como atributo
+def extract_price(contenedor, dominio):
     precio_tag = contenedor.find(class_='js-price-display')
     if precio_tag:
         precio = precio_tag.get('data-product-price', '0')
         if precio and precio != '0' and precio != 'None':
-            return normalize_price(precio)
-        # Método 2: texto del span
+            return normalize_price(precio, dominio)
         texto = precio_tag.get_text(strip=True)
         if texto and '$' in texto:
             raw = text_to_price(texto)
-            return normalize_price(raw)
+            return normalize_price(raw, dominio)
     
-    # Método 3: item-price class
     precio_tag2 = contenedor.find(class_='item-price')
     if precio_tag2:
         texto = precio_tag2.get_text(strip=True)
         if texto and '$' in texto:
             raw = text_to_price(texto)
-            return normalize_price(raw)
+            return normalize_price(raw, dominio)
     
-    # Método 4: data-price atributo
     for tag in contenedor.find_all(attrs={'data-price': True}):
         precio = tag.get('data-price', '0')
         if precio and precio != '0':
-            return normalize_price(precio)
+            return normalize_price(precio, dominio)
 
     return '0'
 
-def scrape_page_static(url, headers):
+def scrape_page_static(url, headers, dominio):
     res = requests.get(url, headers=headers, timeout=10)
     soup = BeautifulSoup(res.text, 'html.parser')
     productos = []
@@ -90,7 +93,7 @@ def scrape_page_static(url, headers):
         if link and not link.startswith('http'):
             link = f"{base_url}{link}"
         
-        precio = extract_price(contenedor)
+        precio = extract_price(contenedor, dominio)
         
         stock_tag = contenedor.find(class_='js-addtocart')
         stock = 'InStock' if stock_tag else 'OutOfStock'
@@ -101,7 +104,7 @@ def scrape_page_static(url, headers):
     next_page = soup.select_one('.swiper-button-next')
     return productos, next_page
 
-def scrape_with_pagination(url):
+def scrape_with_pagination(url, dominio):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     todos = []
     page = 1
@@ -115,7 +118,7 @@ def scrape_with_pagination(url):
         
         page_url = f"{base_url}/page/{page}/" if page > 1 else url
         try:
-            productos, next_page = scrape_page_static(page_url, headers)
+            productos, next_page = scrape_page_static(page_url, headers, dominio)
         except:
             break
         
@@ -128,7 +131,7 @@ def scrape_with_pagination(url):
     
     return todos
 
-def scrape_with_playwright(url):
+def scrape_with_playwright(url, dominio):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -157,7 +160,7 @@ def scrape_with_playwright(url):
             if link and not link.startswith('http'):
                 link = f"{base_url}{link}"
             
-            precio = extract_price(contenedor)
+            precio = extract_price(contenedor, dominio)
             
             stock_tag = contenedor.find(class_='js-addtocart')
             stock = 'InStock' if stock_tag else 'OutOfStock'
@@ -174,10 +177,11 @@ def scrape():
         return jsonify({'error': 'URL requerida'}), 400
     
     try:
+        dominio = get_dominio(url)
         if has_pagination(url):
-            productos = scrape_with_pagination(url)
+            productos = scrape_with_pagination(url, dominio)
         else:
-            productos = scrape_with_playwright(url)
+            productos = scrape_with_playwright(url, dominio)
         return jsonify(productos)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
