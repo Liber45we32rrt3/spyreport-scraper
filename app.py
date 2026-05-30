@@ -74,7 +74,6 @@ def extract_price(contenedor, dominio):
         if precio and precio != '0':
             return normalize_price(precio, dominio)
 
-    # Buscar precio en clases que contengan 'price' o 'precio'
     for tag in contenedor.find_all(True):
         clases = ' '.join(tag.get('class', []))
         if 'price' in clases.lower() or 'precio' in clases.lower():
@@ -163,8 +162,14 @@ def scrape_with_playwright(url, dominio):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(url, timeout=30000)
-        page.wait_for_timeout(5000)
+        page.goto(url, timeout=60000)
+
+        try:
+            page.wait_for_selector('.js-item-product, .item-product', timeout=15000)
+        except:
+            pass
+
+        page.wait_for_timeout(3000)
 
         for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
