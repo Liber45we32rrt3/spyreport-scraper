@@ -61,46 +61,74 @@ def extract_price(contenedor, dominio):
         if texto and '$' in texto:
             raw = text_to_price(texto)
             return normalize_price(raw, dominio)
-    
+
     precio_tag2 = contenedor.find(class_='item-price')
     if precio_tag2:
         texto = precio_tag2.get_text(strip=True)
         if texto and '$' in texto:
             raw = text_to_price(texto)
             return normalize_price(raw, dominio)
-    
+
     for tag in contenedor.find_all(attrs={'data-price': True}):
         precio = tag.get('data-price', '0')
         if precio and precio != '0':
             return normalize_price(precio, dominio)
 
+    # Buscar precio en clases que contengan 'price' o 'precio'
+    for tag in contenedor.find_all(True):
+        clases = ' '.join(tag.get('class', []))
+        if 'price' in clases.lower() or 'precio' in clases.lower():
+            texto = tag.get_text(strip=True)
+            if texto and '$' in texto:
+                raw = text_to_price(texto)
+                if raw != '0':
+                    return normalize_price(raw, dominio)
+
     return '0'
 
-def scrape_page_static(url, headers, dominio):
-    res = requests.get(url, headers=headers, timeout=10)
-    soup = BeautifulSoup(res.text, 'html.parser')
+def get_nombre(contenedor):
+    nombre_tag = contenedor.find(class_='js-item-name')
+    if nombre_tag:
+        return nombre_tag.get_text(strip=True)
+    nombre_tag = contenedor.find(class_='item-name')
+    if nombre_tag:
+        return nombre_tag.get_text(strip=True)
+    return ''
+
+def parse_productos(soup, url, dominio):
     productos = []
     base_url = f"https://{url.split('/')[2]}"
-    
-    for contenedor in soup.select('.js-item-product'):
-        nombre_tag = contenedor.find(class_='js-item-name')
-        if not nombre_tag:
+
+    contenedores = soup.select('.js-item-product, .item-product')
+
+    for contenedor in contenedores:
+        nombre = get_nombre(contenedor)
+        if not nombre:
             continue
-        nombre = nombre_tag.get_text(strip=True)
-        
+
         link_tag = contenedor.find('a')
         link = link_tag.get('href', '') if link_tag else ''
         if link and not link.startswith('http'):
             link = f"{base_url}{link}"
-        
+
         precio = extract_price(contenedor, dominio)
-        
-        stock_tag = contenedor.find(class_='js-addtocart')
+
+        stock_tag = contenedor.find(class_='js-addtocart') or contenedor.find(class_='item-actions')
         stock = 'InStock' if stock_tag else 'OutOfStock'
-        
-        if nombre:
-            productos.append({'name': nombre, 'price': precio or '0', 'availability': stock, 'url': link or url})
-    
+
+        productos.append({
+            'name': nombre,
+            'price': precio or '0',
+            'availability': stock,
+            'url': link or url
+        })
+
+    return productos
+
+def scrape_page_static(url, headers, dominio):
+    res = requests.get(url, headers=headers, timeout=10)
+    soup = BeautifulSoup(res.text, 'html.parser')
+    productos = parse_productos(soup, url, dominio)
     next_page = soup.select_one('.swiper-button-next')
     return productos, next_page
 
@@ -115,20 +143,20 @@ def scrape_with_pagination(url, dominio):
     while page <= 25:
         if time.time() - start_time > MAX_SECONDS:
             break
-        
+
         page_url = f"{base_url}/page/{page}/" if page > 1 else url
         try:
             productos, next_page = scrape_page_static(page_url, headers, dominio)
         except:
             break
-        
+
         if not productos:
             break
         todos.extend(productos)
         if not next_page:
             break
         page += 1
-    
+
     return todos
 
 def scrape_with_playwright(url, dominio):
@@ -137,38 +165,16 @@ def scrape_with_playwright(url, dominio):
         page = browser.new_page()
         page.goto(url, timeout=30000)
         page.wait_for_timeout(5000)
-        
+
         for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(1500)
-        
+
         html = page.content()
         browser.close()
-        
+
         soup = BeautifulSoup(html, 'html.parser')
-        productos = []
-        base_url = f"https://{url.split('/')[2]}"
-        
-        for contenedor in soup.select('.js-item-product'):
-            nombre_tag = contenedor.find(class_='js-item-name')
-            if not nombre_tag:
-                continue
-            nombre = nombre_tag.get_text(strip=True)
-            
-            link_tag = contenedor.find('a')
-            link = link_tag.get('href', '') if link_tag else ''
-            if link and not link.startswith('http'):
-                link = f"{base_url}{link}"
-            
-            precio = extract_price(contenedor, dominio)
-            
-            stock_tag = contenedor.find(class_='js-addtocart')
-            stock = 'InStock' if stock_tag else 'OutOfStock'
-            
-            if nombre:
-                productos.append({'name': nombre, 'price': precio or '0', 'availability': stock, 'url': link or url})
-        
-        return productos
+        return parse_productos(soup, url, dominio)
 
 def is_dynamic_site(url):
     try:
@@ -183,18 +189,18 @@ def scrape():
     url = request.args.get('url')
     if not url:
         return jsonify({'error': 'URL requerida'}), 400
-    
+
     try:
         dominio = get_dominio(url)
         dinamico = is_dynamic_site(url)
-        
+
         if dinamico:
             productos = scrape_with_playwright(url, dominio)
         elif has_pagination(url):
             productos = scrape_with_pagination(url, dominio)
         else:
             productos = scrape_with_playwright(url, dominio)
-            
+
         return jsonify(productos)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
