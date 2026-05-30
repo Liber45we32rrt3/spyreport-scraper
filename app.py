@@ -6,7 +6,6 @@ import time
 
 app = Flask(__name__)
 
-# Tiendas que guardan precios en centavos (dividir por 100)
 TIENDAS_CENTAVOS = [
     'esenzzia.com.ar',
     'perfumistas.com.ar',
@@ -15,6 +14,7 @@ TIENDAS_CENTAVOS = [
     'bombaproject.com.ar',
     'fraganciadecant.com.ar',
     'minianima.com.ar',
+    'janasports.com.ar',
 ]
 
 def get_dominio(url):
@@ -136,11 +136,11 @@ def scrape_with_playwright(url, dominio):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url, timeout=30000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(5000)
         
         for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(1500)
         
         html = page.content()
         browser.close()
@@ -170,6 +170,14 @@ def scrape_with_playwright(url, dominio):
         
         return productos
 
+def is_dynamic_site(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, headers=headers, timeout=10)
+        return '__NEXT_DATA__' in res.text or 'next/dist' in res.text
+    except:
+        return False
+
 @app.route('/scrape', methods=['GET'])
 def scrape():
     url = request.args.get('url')
@@ -178,10 +186,15 @@ def scrape():
     
     try:
         dominio = get_dominio(url)
-        if has_pagination(url):
+        dinamico = is_dynamic_site(url)
+        
+        if dinamico:
+            productos = scrape_with_playwright(url, dominio)
+        elif has_pagination(url):
             productos = scrape_with_pagination(url, dominio)
         else:
             productos = scrape_with_playwright(url, dominio)
+            
         return jsonify(productos)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
