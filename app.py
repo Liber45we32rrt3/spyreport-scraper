@@ -14,7 +14,7 @@ TIENDAS_CENTAVOS = [
     'bombaproject.com.ar',
     'fraganciadecant.com.ar',
     'minianima.com.ar',
-    'janasports.com.ar',
+    
 ]
 
 def get_dominio(url):
