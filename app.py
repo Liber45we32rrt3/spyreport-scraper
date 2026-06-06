@@ -3,6 +3,7 @@ from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import requests
 import time
+import re
 
 app = Flask(__name__)
 
@@ -212,31 +213,32 @@ def scrape_ads_playwright(pagina):
         browser.close()
 
         soup = BeautifulSoup(html, 'html.parser')
+        texto_completo = soup.get_text()
+
+        patron = r'Library ID:\s*(\d+)Started running on ([^\n]+?(?:20\d{2}))'
+        matches = list(re.finditer(patron, texto_completo))
 
         anuncios = []
-        vistos = set()
+        for match in matches:
+            ad_id = match.group(1).strip()
+            fecha = match.group(2).strip()
 
-        for div in soup.find_all('div'):
-            texto = div.get_text(strip=True)
+            inicio = match.end()
+            fragmento = texto_completo[inicio:inicio+500]
 
-            # Buscar ID del anuncio
-            ad_id = None
-            for span in div.find_all(['span', 'div']):
-                t = span.get_text(strip=True)
-                if 'Identificador de la biblioteca:' in t:
-                    ad_id = t.replace('Identificador de la biblioteca:', '').strip().split()[0]
-                    break
+            copy = fragmento.replace('Platforms', '').replace('Open Dropdown', '').replace('See ad details', '').replace('This ad has multiple versions', '').replace('See summary details', '').replace('2 ads', '').strip()
+            copy = re.sub(r'\s+', ' ', copy)[:250]
 
-            if texto and len(texto) > 50 and 'Sponsored' in texto:
-                copy = texto.replace('Sponsored', '').strip()[:300]
+            # Buscar nombre de la página
+            fragmento_antes = texto_completo[max(0, match.start()-200):match.start()]
+            nombre_pagina = pagina
 
-                if copy not in vistos:
-                    vistos.add(copy)
-                    anuncio = {'copy': copy}
-                    if ad_id:
-                        anuncio['url'] = f"https://www.facebook.com/ads/library/?id={ad_id}"
-                        anuncio['id'] = ad_id
-                    anuncios.append(anuncio)
+            anuncios.append({
+                'id': ad_id,
+                'url': f"https://www.facebook.com/ads/library/?id={ad_id}",
+                'inicio': fecha,
+                'copy': copy
+            })
 
         return anuncios[:10]
 
