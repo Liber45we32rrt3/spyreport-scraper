@@ -14,7 +14,14 @@ TIENDAS_CENTAVOS = [
     'bombaproject.com.ar',
     'fraganciadecant.com.ar',
     'minianima.com.ar',
-    
+    'janasports.com.ar',
+    'amiraperfumesarabes.mitiendanube.com',
+    'amaicharopa.mitiendanube.com',
+    'beatriznovoa.com.ar',
+    'thedoomgeneration.mitiendanube.com',
+    'mailletcosmetica.mitiendanube.com',
+    'biocosmeticauvas.mitiendanube.com',
+    'essencedenuit.mitiendanube.com',
 ]
 
 def get_dominio(url):
@@ -189,6 +196,31 @@ def is_dynamic_site(url):
     except:
         return False
 
+def scrape_ads_playwright(pagina):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=AR&q={pagina}&search_type=keyword_unordered"
+        page.goto(url, timeout=30000)
+        page.wait_for_timeout(5000)
+
+        for _ in range(3):
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(1500)
+
+        html = page.content()
+        browser.close()
+
+        soup = BeautifulSoup(html, 'html.parser')
+
+        anuncios = []
+        for div in soup.find_all('div', attrs={'data-testid': True}):
+            texto = div.get_text(strip=True)
+            if texto and len(texto) > 20:
+                anuncios.append(texto[:200])
+
+        return anuncios[:10]
+
 @app.route('/scrape', methods=['GET'])
 def scrape():
     url = request.args.get('url')
@@ -207,6 +239,22 @@ def scrape():
             productos = scrape_with_playwright(url, dominio)
 
         return jsonify(productos)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/ads', methods=['GET'])
+def scrape_ads():
+    pagina = request.args.get('pagina')
+    if not pagina:
+        return jsonify({'error': 'Parámetro pagina requerido'}), 400
+
+    try:
+        anuncios = scrape_ads_playwright(pagina)
+        return jsonify({
+            'pagina': pagina,
+            'cantidad': len(anuncios),
+            'anuncios': anuncios
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
