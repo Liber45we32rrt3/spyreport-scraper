@@ -214,10 +214,29 @@ def scrape_ads_playwright(pagina):
         soup = BeautifulSoup(html, 'html.parser')
 
         anuncios = []
-        for div in soup.find_all('div', attrs={'data-testid': True}):
+        vistos = set()
+
+        for div in soup.find_all('div'):
             texto = div.get_text(strip=True)
-            if texto and len(texto) > 20:
-                anuncios.append(texto[:200])
+
+            # Buscar ID del anuncio
+            ad_id = None
+            for span in div.find_all(['span', 'div']):
+                t = span.get_text(strip=True)
+                if 'Identificador de la biblioteca:' in t:
+                    ad_id = t.replace('Identificador de la biblioteca:', '').strip().split()[0]
+                    break
+
+            if texto and len(texto) > 50 and 'Sponsored' in texto:
+                copy = texto.replace('Sponsored', '').strip()[:300]
+
+                if copy not in vistos:
+                    vistos.add(copy)
+                    anuncio = {'copy': copy}
+                    if ad_id:
+                        anuncio['url'] = f"https://www.facebook.com/ads/library/?id={ad_id}"
+                        anuncio['id'] = ad_id
+                    anuncios.append(anuncio)
 
         return anuncios[:10]
 
