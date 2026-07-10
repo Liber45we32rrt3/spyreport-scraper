@@ -7,6 +7,9 @@ import re
 
 app = Flask(__name__)
 
+from tiendanube_oauth import tiendanube_bp
+app.register_blueprint(tiendanube_bp)
+
 TIENDAS_CENTAVOS = [
     'esenzzia.com.ar',
     'perfumistas.com.ar',
