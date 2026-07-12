@@ -78,14 +78,17 @@ def agregar_competidor(store_id):
     if "." not in url:
         return jsonify({"error": "URL inválida"}), 400
 
-    # Máximo 3 competidores en el plan inicial
+   # Máximo 3 competidores en el plan inicial, sin duplicados
     existentes = (
         sb()
         .table("tiendanube_competidores")
-        .select("id")
+        .select("id, url")
         .eq("store_id", store_id)
         .execute()
     )
+    urls_existentes = [e["url"].rstrip("/") for e in (existentes.data or [])]
+    if url.rstrip("/") in urls_existentes:
+        return jsonify({"error": "Ya estás vigilando esa tienda"}), 400
     if existentes.data and len(existentes.data) >= 3:
         return jsonify({"error": "Máximo 3 competidores en este plan"}), 400
 
