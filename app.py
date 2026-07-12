@@ -9,6 +9,8 @@ app = Flask(__name__)
 
 from tiendanube_oauth import tiendanube_bp
 app.register_blueprint(tiendanube_bp)
+from spyreport_api import api_bp
+app.register_blueprint(api_bp)
 
 TIENDAS_CENTAVOS = [
     'esenzzia.com.ar',
