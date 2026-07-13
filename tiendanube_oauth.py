@@ -10,7 +10,8 @@ Flujo:
   3. Intercambiamos el code por un access_token (no expira, dura
      hasta que desinstalen la app)
   4. Guardamos token + datos de la tienda en Supabase
-  5. Listo: el scraper puede usar la API oficial en vez de scrapear
+  5. Registramos los webhooks de suscripción
+  6. Listo: el scraper puede usar la API oficial en vez de scrapear
 
 Cómo enchufarlo a tu app Flask existente:
 
@@ -121,6 +122,9 @@ def callback():
         on_conflict="store_id",
     ).execute()
 
+    # 5b. Registrar webhooks de suscripción (idempotente)
+    _registrar_webhooks(store_id, access_token)
+
     # 6. Devolver al comerciante a su panel (después: onboarding de SpyReport)
     return redirect(f"https://{store_info.get('original_domain', 'www.tiendanube.com')}/admin")
 
@@ -144,6 +148,42 @@ def _api_get(store_id, token, endpoint, params=None):
     if resp.status_code == 200:
         return resp.json()
     return None
+
+
+# ---------------------------------------------------------------------------
+# Registrar webhooks de suscripción al instalar la app.
+# Si falla no rompemos la instalación: el estado igual se consulta
+# en vivo al abrir la app (/api/tiendas/<id>/suscripcion).
+# Tiendanube NO deduplica webhooks repetidos, por eso primero consultamos
+# los existentes y solo creamos los que falten (reinstalar no duplica).
+# ---------------------------------------------------------------------------
+WEBHOOK_URL = f"{APP_BASE_URL}/webhooks/tiendanube"
+EVENTOS_SUSCRIPCION = ("subscription/updated", "app/suspended", "app/resumed")
+
+
+def _registrar_webhooks(store_id, token):
+    try:
+        existentes = _api_get(store_id, token, "webhooks") or []
+        ya_registrados = {
+            w.get("event")
+            for w in existentes
+            if w.get("url") == WEBHOOK_URL
+        }
+        for evento in EVENTOS_SUSCRIPCION:
+            if evento in ya_registrados:
+                continue
+            requests.post(
+                f"{API_BASE}/{store_id}/webhooks",
+                headers={
+                    "Authentication": f"bearer {token}",
+                    "User-Agent": USER_AGENT,
+                    "Content-Type": "application/json",
+                },
+                json={"event": evento, "url": WEBHOOK_URL},
+                timeout=15,
+            )
+    except Exception:
+        pass  # nunca rompemos la instalación por esto
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +246,6 @@ def test_products(store_id):
                 "nombre": (p.get("name") or {}).get("es"),
                 "precio": (p.get("variants") or [{}])[0].get("price"),
             }
-            for p in products
+        for p in products
         ]
     )
