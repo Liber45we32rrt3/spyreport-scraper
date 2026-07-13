@@ -9,8 +9,9 @@ Endpoints que usa el frontend (React) que ve el comerciante:
   GET    /api/tiendas/<store_id>/comparacion       → productos propios (API
                                                      oficial) + productos de
                                                      cada competidor (scraper)
-  GET    /debug/subscription                       → DEBUG temporal (borrar
-                                                     antes de homologar)
+  GET    /debug/subscription                       → DEBUG temporal
+  GET    /debug/billing                            → DEBUG temporal
+  (los dos /debug se borran antes de homologar)
 
 Cómo enchufarlo (igual que el anterior):
 
@@ -31,6 +32,8 @@ from tiendanube_oauth import sb, _api_get
 
 api_bp = Blueprint("spyreport_api", __name__)
 CORS(api_bp)  # permite llamadas desde el frontend (Vercel / panel Tiendanube)
+
+APP_ID = "33732"  # ID de SpyReport en Tiendanube
 
 
 def _store_token(store_id):
@@ -210,11 +213,17 @@ def comparacion(store_id):
 
 
 # ---------------------------------------------------------------------------
-# DEBUG TEMPORAL: verificar 402 de suscripción (borrar antes de homologar)
+# DEBUG TEMPORAL (borrar los dos endpoints antes de homologar)
 # ---------------------------------------------------------------------------
+def _debug_autorizado():
+    return request.args.get("key") == os.environ.get(
+        "DEBUG_KEY", "spyreport-debug-2026"
+    )
+
+
 @api_bp.route("/debug/subscription")
 def debug_subscription():
-    if request.args.get("key") != os.environ.get("DEBUG_KEY", "spyreport-debug-2026"):
+    if not _debug_autorizado():
         return jsonify({"error": "no autorizado"}), 401
 
     store_id = request.args.get("store_id")
@@ -236,4 +245,30 @@ def debug_subscription():
         "tiendanube_status": tn.status_code,
         "bloqueada": tn.status_code == 402,
         "body_preview": tn.text[:300],
+    })
+
+
+@api_bp.route("/debug/billing")
+def debug_billing():
+    if not _debug_autorizado():
+        return jsonify({"error": "no autorizado"}), 401
+
+    store_id = request.args.get("store_id")
+    concept = request.args.get("concept", "apps")
+    token = _store_token(store_id)
+    if not token:
+        return jsonify({"error": "tienda no encontrada"}), 404
+
+    tn = rq.get(
+        f"https://api.tiendanube.com/2025-03/{store_id}"
+        f"/concepts/{concept}/services/{APP_ID}/subscriptions",
+        headers={
+            "Authentication": f"bearer {token}",
+            "User-Agent": "SpyReport (spyreport59@gmail.com)",
+        },
+    )
+    return jsonify({
+        "concept_probado": concept,
+        "status": tn.status_code,
+        "body": tn.text[:500],
     })
