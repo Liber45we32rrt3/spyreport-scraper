@@ -9,6 +9,8 @@ Endpoints que usa el frontend (React) que ve el comerciante:
   GET    /api/tiendas/<store_id>/comparacion       → productos propios (API
                                                      oficial) + productos de
                                                      cada competidor (scraper)
+  GET    /debug/subscription                       → DEBUG temporal (borrar
+                                                     antes de homologar)
 
 Cómo enchufarlo (igual que el anterior):
 
@@ -20,6 +22,7 @@ Requiere en requirements.txt:  flask-cors
 """
 
 import os
+import requests as rq
 from flask import Blueprint, request, jsonify
 from flask_cors import CORS
 
@@ -78,7 +81,7 @@ def agregar_competidor(store_id):
     if "." not in url:
         return jsonify({"error": "URL inválida"}), 400
 
-   # Máximo 3 competidores en el plan inicial, sin duplicados
+    # Máximo 3 competidores en el plan inicial, sin duplicados
     existentes = (
         sb()
         .table("tiendanube_competidores")
@@ -204,3 +207,33 @@ def comparacion(store_id):
     return jsonify(
         {"resumen": resumen, "mis_productos": propios, "competidores": competidores}
     )
+
+
+# ---------------------------------------------------------------------------
+# DEBUG TEMPORAL: verificar 402 de suscripción (borrar antes de homologar)
+# ---------------------------------------------------------------------------
+@api_bp.route("/debug/subscription")
+def debug_subscription():
+    if request.args.get("key") != os.environ.get("DEBUG_KEY", "spyreport-debug-2026"):
+        return jsonify({"error": "no autorizado"}), 401
+
+    store_id = request.args.get("store_id")
+    if not store_id:
+        return jsonify({"error": "falta store_id"}), 400
+
+    token = _store_token(store_id)
+    if not token:
+        return jsonify({"error": "tienda no encontrada en Supabase"}), 404
+
+    tn = rq.get(
+        f"https://api.tiendanube.com/2025-03/{store_id}/store",
+        headers={
+            "Authentication": f"bearer {token}",
+            "User-Agent": "SpyReport (spyreport59@gmail.com)",
+        },
+    )
+    return jsonify({
+        "tiendanube_status": tn.status_code,
+        "bloqueada": tn.status_code == 402,
+        "body_preview": tn.text[:300],
+    })
