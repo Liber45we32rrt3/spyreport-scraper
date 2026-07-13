@@ -13,10 +13,6 @@ Endpoints que usa el frontend (React) que ve el comerciante:
                                                      (Billing de Tiendanube)
   POST   /webhooks/tiendanube                      → recibe webhooks de
                                                      Tiendanube (firma HMAC)
-  GET    /debug/subscription                       → DEBUG temporal
-  GET    /debug/billing                            → DEBUG temporal
-  GET    /debug/registrar-webhooks                 → DEBUG temporal
-  (los tres /debug se borran antes de homologar)
 
 Cómo enchufarlo (igual que el anterior):
 
@@ -43,7 +39,6 @@ api_bp = Blueprint("spyreport_api", __name__)
 CORS(api_bp)  # permite llamadas desde el frontend (Vercel / panel Tiendanube)
 
 APP_ID = "33732"  # ID de SpyReport en Tiendanube
-WEBHOOK_URL = "https://spyreport-scraper-production.up.railway.app/webhooks/tiendanube"
 
 
 def _store_token(store_id):
@@ -331,92 +326,3 @@ def webhook_tiendanube():
                 pass  # nunca fallamos el 200: Tiendanube reintentaría 18 veces
 
     return jsonify({"ok": True}), 200
-
-
-# ---------------------------------------------------------------------------
-# DEBUG TEMPORAL (borrar los tres endpoints antes de homologar)
-# ---------------------------------------------------------------------------
-def _debug_autorizado():
-    return request.args.get("key") == os.environ.get(
-        "DEBUG_KEY", "spyreport-debug-2026"
-    )
-
-
-@api_bp.route("/debug/subscription")
-def debug_subscription():
-    if not _debug_autorizado():
-        return jsonify({"error": "no autorizado"}), 401
-
-    store_id = request.args.get("store_id")
-    if not store_id:
-        return jsonify({"error": "falta store_id"}), 400
-
-    token = _store_token(store_id)
-    if not token:
-        return jsonify({"error": "tienda no encontrada en Supabase"}), 404
-
-    tn = rq.get(
-        f"https://api.tiendanube.com/2025-03/{store_id}/store",
-        headers={
-            "Authentication": f"bearer {token}",
-            "User-Agent": "SpyReport (spyreport59@gmail.com)",
-        },
-    )
-    return jsonify({
-        "tiendanube_status": tn.status_code,
-        "bloqueada": tn.status_code == 402,
-        "body_preview": tn.text[:300],
-    })
-
-
-@api_bp.route("/debug/billing")
-def debug_billing():
-    if not _debug_autorizado():
-        return jsonify({"error": "no autorizado"}), 401
-
-    store_id = request.args.get("store_id")
-    concept = request.args.get("concept", "app-cost")
-    token = _store_token(store_id)
-    if not token:
-        return jsonify({"error": "tienda no encontrada"}), 404
-
-    tn = rq.get(
-        f"https://api.tiendanube.com/2025-03/{store_id}"
-        f"/concepts/{concept}/services/{APP_ID}/subscriptions",
-        headers={
-            "Authentication": f"bearer {token}",
-            "User-Agent": "SpyReport (spyreport59@gmail.com)",
-        },
-    )
-    return jsonify({
-        "concept_probado": concept,
-        "status": tn.status_code,
-        "body": tn.text[:500],
-    })
-
-
-@api_bp.route("/debug/registrar-webhooks")
-def debug_registrar_webhooks():
-    if not _debug_autorizado():
-        return jsonify({"error": "no autorizado"}), 401
-
-    store_id = request.args.get("store_id")
-    token = _store_token(store_id)
-    if not token:
-        return jsonify({"error": "tienda no encontrada"}), 404
-
-    resultados = []
-    for evento in ("subscription/updated", "app/suspended", "app/resumed"):
-        tn = rq.post(
-            f"https://api.tiendanube.com/2025-03/{store_id}/webhooks",
-            headers={
-                "Authentication": f"bearer {token}",
-                "User-Agent": "SpyReport (spyreport59@gmail.com)",
-                "Content-Type": "application/json",
-            },
-            json={"event": evento, "url": WEBHOOK_URL},
-        )
-        resultados.append(
-            {"evento": evento, "status": tn.status_code, "body": tn.text[:200]}
-        )
-    return jsonify(resultados)
