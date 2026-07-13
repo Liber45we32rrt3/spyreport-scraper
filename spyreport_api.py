@@ -9,6 +9,8 @@ Endpoints que usa el frontend (React) que ve el comerciante:
   GET    /api/tiendas/<store_id>/comparacion       → productos propios (API
                                                      oficial) + productos de
                                                      cada competidor (scraper)
+  GET    /api/tiendas/<store_id>/suscripcion       → estado de la suscripción
+                                                     (Billing de Tiendanube)
   GET    /debug/subscription                       → DEBUG temporal
   GET    /debug/billing                            → DEBUG temporal
   (los dos /debug se borran antes de homologar)
@@ -23,6 +25,8 @@ Requiere en requirements.txt:  flask-cors
 """
 
 import os
+from datetime import datetime, timezone
+
 import requests as rq
 from flask import Blueprint, request, jsonify
 from flask_cors import CORS
@@ -213,6 +217,72 @@ def comparacion(store_id):
 
 
 # ---------------------------------------------------------------------------
+# Suscripción: consulta Billing de Tiendanube, deriva estado y lo cachea
+#   - 200 + next_execution futura → "activa"
+#   - 200 + next_execution pasada → "vencida"
+#   - 404 (SubscriptionConcept not found) → "sin_suscripcion" (trial vencido
+#     o nunca pagó — verificado con la tienda demo)
+#   - cualquier otra cosa → "desconocido" (el frontend deja pasar: mejor
+#     dejar entrar con Billing caído que bloquear a un cliente que pagó)
+# ---------------------------------------------------------------------------
+def _consultar_suscripcion(store_id, token):
+    """Consulta Billing y devuelve (estado, next_execution)."""
+    tn = rq.get(
+        f"https://api.tiendanube.com/2025-03/{store_id}"
+        f"/concepts/app-cost/services/{APP_ID}/subscriptions",
+        headers={
+            "Authentication": f"bearer {token}",
+            "User-Agent": "SpyReport (spyreport59@gmail.com)",
+        },
+        timeout=10,
+    )
+    if tn.status_code == 404:
+        return "sin_suscripcion", None
+    if tn.status_code != 200:
+        return "desconocido", None
+
+    data = tn.json()
+    next_exec = data.get("next_execution")
+    if not next_exec:
+        return "desconocido", None
+
+    try:
+        fecha = datetime.fromisoformat(str(next_exec).replace("Z", "+00:00"))
+        if fecha.tzinfo is None:
+            fecha = fecha.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return "desconocido", next_exec
+
+    estado = "activa" if fecha > datetime.now(timezone.utc) else "vencida"
+    return estado, next_exec
+
+
+@api_bp.route("/api/tiendas/<int:store_id>/suscripcion", methods=["GET"])
+def estado_suscripcion(store_id):
+    token = _store_token(store_id)
+    if not token:
+        return jsonify({"error": "Tienda no instalada"}), 404
+
+    estado, next_exec = _consultar_suscripcion(store_id, token)
+
+    # Cachear en Supabase (si falla, no rompemos la respuesta)
+    try:
+        sb().table("tiendanube_stores").update({
+            "suscripcion_estado": estado,
+            "suscripcion_next_execution": next_exec,
+            "suscripcion_verificada_en": datetime.now(timezone.utc).isoformat(),
+        }).eq("store_id", store_id).execute()
+    except Exception:
+        pass
+
+    return jsonify({
+        "estado": estado,
+        "activa": estado == "activa",
+        "next_execution": next_exec,
+    })
+
+
+# ---------------------------------------------------------------------------
 # DEBUG TEMPORAL (borrar los dos endpoints antes de homologar)
 # ---------------------------------------------------------------------------
 def _debug_autorizado():
@@ -254,7 +324,7 @@ def debug_billing():
         return jsonify({"error": "no autorizado"}), 401
 
     store_id = request.args.get("store_id")
-    concept = request.args.get("concept", "apps")
+    concept = request.args.get("concept", "app-cost")
     token = _store_token(store_id)
     if not token:
         return jsonify({"error": "tienda no encontrada"}), 404
