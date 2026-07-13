@@ -11,9 +11,12 @@ Endpoints que usa el frontend (React) que ve el comerciante:
                                                      cada competidor (scraper)
   GET    /api/tiendas/<store_id>/suscripcion       → estado de la suscripción
                                                      (Billing de Tiendanube)
+  POST   /webhooks/tiendanube                      → recibe webhooks de
+                                                     Tiendanube (firma HMAC)
   GET    /debug/subscription                       → DEBUG temporal
   GET    /debug/billing                            → DEBUG temporal
-  (los dos /debug se borran antes de homologar)
+  GET    /debug/registrar-webhooks                 → DEBUG temporal
+  (los tres /debug se borran antes de homologar)
 
 Cómo enchufarlo (igual que el anterior):
 
@@ -24,6 +27,8 @@ Requiere en requirements.txt:  flask-cors
 (para que el frontend en Vercel pueda llamar a este backend en Railway)
 """
 
+import hashlib
+import hmac as hmac_lib
 import os
 from datetime import datetime, timezone
 
@@ -38,6 +43,7 @@ api_bp = Blueprint("spyreport_api", __name__)
 CORS(api_bp)  # permite llamadas desde el frontend (Vercel / panel Tiendanube)
 
 APP_ID = "33732"  # ID de SpyReport en Tiendanube
+WEBHOOK_URL = "https://spyreport-scraper-production.up.railway.app/webhooks/tiendanube"
 
 
 def _store_token(store_id):
@@ -257,6 +263,14 @@ def _consultar_suscripcion(store_id, token):
     return estado, next_exec
 
 
+def _actualizar_suscripcion_en_supabase(store_id, estado, next_exec):
+    sb().table("tiendanube_stores").update({
+        "suscripcion_estado": estado,
+        "suscripcion_next_execution": next_exec,
+        "suscripcion_verificada_en": datetime.now(timezone.utc).isoformat(),
+    }).eq("store_id", store_id).execute()
+
+
 @api_bp.route("/api/tiendas/<int:store_id>/suscripcion", methods=["GET"])
 def estado_suscripcion(store_id):
     token = _store_token(store_id)
@@ -267,11 +281,7 @@ def estado_suscripcion(store_id):
 
     # Cachear en Supabase (si falla, no rompemos la respuesta)
     try:
-        sb().table("tiendanube_stores").update({
-            "suscripcion_estado": estado,
-            "suscripcion_next_execution": next_exec,
-            "suscripcion_verificada_en": datetime.now(timezone.utc).isoformat(),
-        }).eq("store_id", store_id).execute()
+        _actualizar_suscripcion_en_supabase(store_id, estado, next_exec)
     except Exception:
         pass
 
@@ -283,7 +293,48 @@ def estado_suscripcion(store_id):
 
 
 # ---------------------------------------------------------------------------
-# DEBUG TEMPORAL (borrar los dos endpoints antes de homologar)
+# Webhook de Tiendanube: subscription/updated (+ suspended/resumed)
+# Estrategia: no confiamos en el contenido del evento; ante cualquier
+# notificación re-consultamos el estado real con _consultar_suscripcion().
+# Así los webhooks duplicados o desordenados no nos afectan (idempotente).
+# Respondemos 200 rápido: Tiendanube espera 2XX en menos de 3 segundos.
+# ---------------------------------------------------------------------------
+def _firma_valida(raw_body, firma_header):
+    secret = os.environ.get("TIENDANUBE_CLIENT_SECRET", "")
+    esperada = hmac_lib.new(
+        secret.encode(), raw_body, hashlib.sha256
+    ).hexdigest()
+    return hmac_lib.compare_digest(esperada, firma_header or "")
+
+
+@api_bp.route("/webhooks/tiendanube", methods=["POST"])
+def webhook_tiendanube():
+    raw = request.get_data()
+    firma = request.headers.get("x-linkedstore-hmac-sha256")
+    if not _firma_valida(raw, firma):
+        return jsonify({"error": "firma inválida"}), 401
+
+    data = request.get_json(silent=True) or {}
+    store_id = data.get("store_id")
+    evento = data.get("event", "")
+
+    if not store_id:
+        return jsonify({"ok": True}), 200  # nada que hacer
+
+    if evento in ("subscription/updated", "app/suspended", "app/resumed"):
+        token = _store_token(store_id)
+        if token:
+            try:
+                estado, next_exec = _consultar_suscripcion(store_id, token)
+                _actualizar_suscripcion_en_supabase(store_id, estado, next_exec)
+            except Exception:
+                pass  # nunca fallamos el 200: Tiendanube reintentaría 18 veces
+
+    return jsonify({"ok": True}), 200
+
+
+# ---------------------------------------------------------------------------
+# DEBUG TEMPORAL (borrar los tres endpoints antes de homologar)
 # ---------------------------------------------------------------------------
 def _debug_autorizado():
     return request.args.get("key") == os.environ.get(
@@ -342,3 +393,30 @@ def debug_billing():
         "status": tn.status_code,
         "body": tn.text[:500],
     })
+
+
+@api_bp.route("/debug/registrar-webhooks")
+def debug_registrar_webhooks():
+    if not _debug_autorizado():
+        return jsonify({"error": "no autorizado"}), 401
+
+    store_id = request.args.get("store_id")
+    token = _store_token(store_id)
+    if not token:
+        return jsonify({"error": "tienda no encontrada"}), 404
+
+    resultados = []
+    for evento in ("subscription/updated", "app/suspended", "app/resumed"):
+        tn = rq.post(
+            f"https://api.tiendanube.com/2025-03/{store_id}/webhooks",
+            headers={
+                "Authentication": f"bearer {token}",
+                "User-Agent": "SpyReport (spyreport59@gmail.com)",
+                "Content-Type": "application/json",
+            },
+            json={"event": evento, "url": WEBHOOK_URL},
+        )
+        resultados.append(
+            {"evento": evento, "status": tn.status_code, "body": tn.text[:200]}
+        )
+    return jsonify(resultados)
