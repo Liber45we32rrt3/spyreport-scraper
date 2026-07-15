@@ -11,7 +11,7 @@ Flujo:
      hasta que desinstalen la app)
   4. Guardamos token + datos de la tienda en Supabase
   5. Registramos los webhooks de suscripción
-  6. Listo: el scraper puede usar la API oficial en vez de scrapear
+  6. Redirigimos a la app embebida dentro del panel
 
 Cómo enchufarlo a tu app Flask existente:
 
@@ -125,8 +125,11 @@ def callback():
     # 5b. Registrar webhooks de suscripción (idempotente)
     _registrar_webhooks(store_id, access_token)
 
-    # 6. Devolver al comerciante a su panel (después: onboarding de SpyReport)
-    return redirect(f"https://{store_info.get('original_domain', 'www.tiendanube.com')}/admin")
+    # 6. Redirigir a la app embebida DENTRO del panel (no al dashboard general).
+    #    Antes íbamos a /admin (dashboard) y el comerciante quedaba perdido;
+    #    ahora vamos directo a /admin/apps/<APP_ID>, que abre SpyReport.
+    dominio = store_info.get("original_domain") or "www.tiendanube.com"
+    return redirect(f"https://{dominio}/admin/apps/{APP_ID}")
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +249,6 @@ def test_products(store_id):
                 "nombre": (p.get("name") or {}).get("es"),
                 "precio": (p.get("variants") or [{}])[0].get("price"),
             }
-        for p in products
+            for p in products
         ]
     )
