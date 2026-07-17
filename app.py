@@ -33,8 +33,8 @@ def has_pagination(url):
 
 def text_to_price(texto):
     """Convierte el texto visible de un precio (ej. '$39.000' o 'R$89,90')
-    a un entero de pesos/reales. El texto visible SIEMPRE viene en la moneda
-    ya mostrada, nunca en centavos, así que acá NO se divide por 100.
+    a un entero. El texto visible SIEMPRE viene en la moneda ya mostrada,
+    nunca en centavos, así que acá NO se divide por 100.
     - Con coma decimal ('89,90' o '1.234,56'): la coma es decimal, el punto
       es separador de miles. Nos quedamos con la parte entera (89, 1234).
     - Sin coma ('39.000'): el punto es separador de miles (39000).
@@ -103,6 +103,42 @@ def extract_price(contenedor, dominio):
     return '0'
 
 
+# Señales de que un producto está AGOTADO en la tarjeta de la grilla.
+# La lógica es "hay stock salvo que se demuestre lo contrario": en la grilla
+# de Tiendanube el botón de comprar no aparece, así que no sirve buscarlo.
+# En cambio, los productos agotados SÍ suelen marcarse con clases o texto.
+CLASES_SIN_STOCK = (
+    'no-stock', 'sin-stock', 'nostock', 'sold-out', 'soldout',
+    'out-of-stock', 'outofstock', 'agotado', 'esgotado', 'unavailable',
+)
+TEXTOS_SIN_STOCK = ('sin stock', 'agotado', 'esgotado', 'sold out', 'no disponible')
+
+
+def detectar_stock(contenedor):
+    """Devuelve 'InStock' u 'OutOfStock' para una tarjeta de producto.
+    Asume que hay stock salvo que encuentre una señal explícita de agotado.
+    """
+    # 1) Atributo data-available="false" (algunos temas de Tiendanube)
+    for tag in contenedor.find_all(attrs={'data-available': True}):
+        val = str(tag.get('data-available', '')).lower()
+        if val in ('false', '0', 'no'):
+            return 'OutOfStock'
+
+    # 2) Clases que indican agotado en cualquier elemento de la tarjeta
+    for tag in contenedor.find_all(True):
+        clases = ' '.join(tag.get('class', [])).lower()
+        if any(c in clases for c in CLASES_SIN_STOCK):
+            return 'OutOfStock'
+
+    # 3) Texto visible de agotado en la tarjeta
+    texto_tarjeta = contenedor.get_text(separator=' ', strip=True).lower()
+    if any(t in texto_tarjeta for t in TEXTOS_SIN_STOCK):
+        return 'OutOfStock'
+
+    # Sin señales de agotado → asumimos que hay stock
+    return 'InStock'
+
+
 def get_nombre(contenedor):
     nombre_tag = contenedor.find(class_='js-item-name')
     if nombre_tag:
@@ -126,8 +162,7 @@ def parse_productos(soup, url, dominio):
         if link and not link.startswith('http'):
             link = f"{base_url}{link}"
         precio = extract_price(contenedor, dominio)
-        stock_tag = contenedor.find(class_='js-addtocart') or contenedor.find(class_='item-actions')
-        stock = 'InStock' if stock_tag else 'OutOfStock'
+        stock = detectar_stock(contenedor)
         productos.append({
             'name': nombre,
             'price': precio or '0',
