@@ -57,6 +57,28 @@ def _store_token(store_id):
         return None
 
 
+def _get_todos_productos(store_id, token, max_paginas=20):
+    """Trae TODO el catálogo propio del comerciante paginando la API oficial.
+    Tiendanube devuelve como máximo 200 productos por página; iteramos hasta
+    que una página venga incompleta (última) o vacía. Sin esto, las tiendas
+    con más de 50 productos quedaban con la comparación incompleta.
+    """
+    todos = []
+    page = 1
+    while page <= max_paginas:
+        lote = _api_get(
+            store_id, token, "products",
+            {"per_page": 200, "page": page},
+        )
+        if not lote:
+            break
+        todos.extend(lote)
+        if len(lote) < 200:
+            break  # última página
+        page += 1
+    return todos
+
+
 # ---------------------------------------------------------------------------
 # Competidores de una tienda
 # ---------------------------------------------------------------------------
@@ -133,8 +155,8 @@ def comparacion(store_id):
     if not token:
         return jsonify({"error": "Tienda no instalada"}), 404
 
-    # 1. Productos propios por la API oficial
-    propios_raw = _api_get(store_id, token, "products", {"per_page": 50}) or []
+    # 1. Productos propios por la API oficial (paginado: trae TODO el catálogo)
+    propios_raw = _get_todos_productos(store_id, token) or []
     propios = [
         {
             "nombre": (p.get("name") or {}).get("es") or "",
