@@ -195,6 +195,7 @@ def comparacion(store_id):
                             "nombre": p["name"],
                             "precio": float(p["price"] or 0),
                             "stock": p["availability"],
+                            "url": p.get("url") or "",
                         }
                         for p in (productos or [])[:50]
                     ],
