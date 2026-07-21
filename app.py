@@ -149,8 +149,15 @@ def get_nombre(contenedor):
     return ''
 
 
-def parse_productos(soup, url, dominio):
+def parse_productos(soup, url, dominio, vistos=None):
+    """Extrae los productos de una página. Deduplica usando el set 'vistos':
+    si el mismo producto aparece dos veces (temas que renderizan la grilla
+    para desktop y mobile) o en varias páginas/categorías, entra una sola vez.
+    La clave de dedup es el link del producto (único); si no hay link,
+    nombre+precio."""
     productos = []
+    if vistos is None:
+        vistos = set()
     base_url = f"https://{url.split('/')[2]}"
     contenedores = soup.select('.js-item-product, .item-product')
     for contenedor in contenedores:
@@ -161,7 +168,13 @@ def parse_productos(soup, url, dominio):
         link = link_tag.get('href', '') if link_tag else ''
         if link and not link.startswith('http'):
             link = f"{base_url}{link}"
+
         precio = extract_price(contenedor, dominio)
+        clave = link if link else f"{nombre}|{precio}"
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+
         stock = detectar_stock(contenedor)
         productos.append({
             'name': nombre,
@@ -172,10 +185,10 @@ def parse_productos(soup, url, dominio):
     return productos
 
 
-def scrape_page_static(url, headers, dominio):
+def scrape_page_static(url, headers, dominio, vistos=None):
     res = requests.get(url, headers=headers, timeout=10)
     soup = BeautifulSoup(res.text, 'html.parser')
-    productos = parse_productos(soup, url, dominio)
+    productos = parse_productos(soup, url, dominio, vistos)
     next_page = soup.select_one('.swiper-button-next')
     return productos, next_page
 
@@ -183,6 +196,7 @@ def scrape_page_static(url, headers, dominio):
 def scrape_with_pagination(url, dominio):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     todos = []
+    vistos = set()  # dedup compartido entre TODAS las páginas
     page = 1
     base_url = url.rstrip('/')
     start_time = time.time()
@@ -192,10 +206,11 @@ def scrape_with_pagination(url, dominio):
             break
         page_url = f"{base_url}/page/{page}/" if page > 1 else url
         try:
-            productos, next_page = scrape_page_static(page_url, headers, dominio)
+            productos, next_page = scrape_page_static(page_url, headers, dominio, vistos)
         except:
             break
         if not productos:
+            # Página sin productos NUEVOS (vacía o toda repetida) → terminamos
             break
         todos.extend(productos)
         if not next_page:
@@ -220,7 +235,7 @@ def scrape_with_playwright(url, dominio):
         html = page.content()
         browser.close()
         soup = BeautifulSoup(html, 'html.parser')
-        return parse_productos(soup, url, dominio)
+        return parse_productos(soup, url, dominio, set())
 
 
 def is_dynamic_site(url):
