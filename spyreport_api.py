@@ -197,7 +197,7 @@ def comparacion(store_id):
                             "stock": p["availability"],
                             "url": p.get("url") or "",
                         }
-                        for p in (productos or [])[:50]
+                        for p in (productos or [])[:100]
                     ],
                 }
             )
