@@ -21,16 +21,6 @@ def get_dominio(url):
         return ''
 
 
-def has_pagination(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        res = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        return soup.select_one('.swiper-button-next') is not None
-    except:
-        return False
-
-
 def text_to_price(texto):
     """Convierte el texto visible de un precio (ej. '$39.000' o 'R$89,90')
     a un entero. El texto visible SIEMPRE viene en la moneda ya mostrada,
@@ -186,14 +176,27 @@ def parse_productos(soup, url, dominio, vistos=None):
 
 
 def scrape_page_static(url, headers, dominio, vistos=None):
+    """Trae los productos NUEVOS de una página. Ya no depende de detectar
+    ningún botón 'siguiente': quien llama corta cuando esta función deja de
+    devolver productos nuevos."""
     res = requests.get(url, headers=headers, timeout=10)
     soup = BeautifulSoup(res.text, 'html.parser')
     productos = parse_productos(soup, url, dominio, vistos)
-    next_page = soup.select_one('.swiper-button-next')
-    return productos, next_page
+    return productos
 
 
 def scrape_with_pagination(url, dominio):
+    """Recorre /page/1, /page/2, ... sumando productos nuevos hasta que una
+    página no aporte ninguno (fin del catálogo) o se corte por tiempo.
+
+    Antes esto dependía de encontrar el botón '.swiper-button-next' para saber
+    si seguir paginando. Muchos temas (First Hand, etc.) usan otra paginación,
+    así que el botón no aparecía y el scraper se quedaba en la página 1.
+    Ahora la señal de fin es puramente el contenido: si /page/N no trae ningún
+    producto nuevo respecto de lo ya visto, terminamos. El set 'vistos' hace
+    que una página repetida (algunos temas devuelven la última una y otra vez)
+    también cuente como 'sin nuevos' y corte el loop.
+    """
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     todos = []
     vistos = set()  # dedup compartido entre TODAS las páginas
@@ -206,15 +209,13 @@ def scrape_with_pagination(url, dominio):
             break
         page_url = f"{base_url}/page/{page}/" if page > 1 else url
         try:
-            productos, next_page = scrape_page_static(page_url, headers, dominio, vistos)
-        except:
+            productos = scrape_page_static(page_url, headers, dominio, vistos)
+        except Exception:
             break
         if not productos:
-            # Página sin productos NUEVOS (vacía o toda repetida) → terminamos
+            # Página sin productos NUEVOS (fin del catálogo o página repetida)
             break
         todos.extend(productos)
-        if not next_page:
-            break
         page += 1
     return todos
 
@@ -289,12 +290,14 @@ def scrape():
         return jsonify({'error': 'URL requerida'}), 400
     try:
         dominio = get_dominio(url)
-        dinamico = is_dynamic_site(url)
-        if dinamico:
-            productos = scrape_with_playwright(url, dominio)
-        elif has_pagination(url):
+        # Estrategia: intentamos SIEMPRE la paginación estática primero
+        # (rápida y cubre la mayoría de los temas de Tiendanube, con o sin
+        # botón de "siguiente" detectable). Solo si no trae NADA —tienda 100%
+        # dinámica que renderiza por JavaScript— caemos a Playwright.
+        productos = []
+        if not is_dynamic_site(url):
             productos = scrape_with_pagination(url, dominio)
-        else:
+        if not productos:
             productos = scrape_with_playwright(url, dominio)
         return jsonify(productos)
     except Exception as e:
