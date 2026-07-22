@@ -24,11 +24,7 @@ def get_dominio(url):
 def text_to_price(texto):
     """Convierte el texto visible de un precio (ej. '$39.000' o 'R$89,90')
     a un entero. El texto visible SIEMPRE viene en la moneda ya mostrada,
-    nunca en centavos, así que acá NO se divide por 100.
-    - Con coma decimal ('89,90' o '1.234,56'): la coma es decimal, el punto
-      es separador de miles. Nos quedamos con la parte entera (89, 1234).
-    - Sin coma ('39.000'): el punto es separador de miles (39000).
-    """
+    nunca en centavos, así que acá NO se divide por 100."""
     if not texto:
         return '0'
     limpio = texto.replace('$', '').replace('R', '').replace(' ', '').strip()
@@ -43,8 +39,7 @@ def text_to_price(texto):
 
 def price_from_attribute(precio_attr):
     """El atributo data-product-price / data-price de Tiendanube viene en
-    CENTAVOS (ej. '3900000' = $39.000). Se divide por 100 para pasarlo a la
-    moneda visible. Maneja '3900000' y '3900000.00'."""
+    CENTAVOS (ej. '3900000' = $39.000). Se divide por 100."""
     try:
         centavos = float(str(precio_attr).replace(',', '.'))
         return str(int(centavos // 100))
@@ -93,10 +88,6 @@ def extract_price(contenedor, dominio):
     return '0'
 
 
-# Señales de que un producto está AGOTADO en la tarjeta de la grilla.
-# La lógica es "hay stock salvo que se demuestre lo contrario": en la grilla
-# de Tiendanube el botón de comprar no aparece, así que no sirve buscarlo.
-# En cambio, los productos agotados SÍ suelen marcarse con clases o texto.
 CLASES_SIN_STOCK = (
     'no-stock', 'sin-stock', 'nostock', 'sold-out', 'soldout',
     'out-of-stock', 'outofstock', 'agotado', 'esgotado', 'unavailable',
@@ -106,26 +97,21 @@ TEXTOS_SIN_STOCK = ('sin stock', 'agotado', 'esgotado', 'sold out', 'no disponib
 
 def detectar_stock(contenedor):
     """Devuelve 'InStock' u 'OutOfStock' para una tarjeta de producto.
-    Asume que hay stock salvo que encuentre una señal explícita de agotado.
-    """
-    # 1) Atributo data-available="false" (algunos temas de Tiendanube)
+    Asume que hay stock salvo que encuentre una señal explícita de agotado."""
     for tag in contenedor.find_all(attrs={'data-available': True}):
         val = str(tag.get('data-available', '')).lower()
         if val in ('false', '0', 'no'):
             return 'OutOfStock'
 
-    # 2) Clases que indican agotado en cualquier elemento de la tarjeta
     for tag in contenedor.find_all(True):
         clases = ' '.join(tag.get('class', [])).lower()
         if any(c in clases for c in CLASES_SIN_STOCK):
             return 'OutOfStock'
 
-    # 3) Texto visible de agotado en la tarjeta
     texto_tarjeta = contenedor.get_text(separator=' ', strip=True).lower()
     if any(t in texto_tarjeta for t in TEXTOS_SIN_STOCK):
         return 'OutOfStock'
 
-    # Sin señales de agotado → asumimos que hay stock
     return 'InStock'
 
 
@@ -140,11 +126,7 @@ def get_nombre(contenedor):
 
 
 def parse_productos(soup, url, dominio, vistos=None):
-    """Extrae los productos de una página. Deduplica usando el set 'vistos':
-    si el mismo producto aparece dos veces (temas que renderizan la grilla
-    para desktop y mobile) o en varias páginas/categorías, entra una sola vez.
-    La clave de dedup es el link del producto (único); si no hay link,
-    nombre+precio."""
+    """Extrae los productos de una página. Deduplica usando el set 'vistos'."""
     productos = []
     if vistos is None:
         vistos = set()
@@ -176,9 +158,8 @@ def parse_productos(soup, url, dominio, vistos=None):
 
 
 def scrape_page_static(url, headers, dominio, vistos=None):
-    """Trae los productos NUEVOS de una página. Ya no depende de detectar
-    ningún botón 'siguiente': quien llama corta cuando esta función deja de
-    devolver productos nuevos."""
+    """Trae los productos NUEVOS de una página. No depende de detectar botón
+    de 'siguiente': quien llama corta cuando deja de haber productos nuevos."""
     res = requests.get(url, headers=headers, timeout=10)
     soup = BeautifulSoup(res.text, 'html.parser')
     productos = parse_productos(soup, url, dominio, vistos)
@@ -187,33 +168,30 @@ def scrape_page_static(url, headers, dominio, vistos=None):
 
 def scrape_with_pagination(url, dominio):
     """Recorre /page/1, /page/2, ... sumando productos nuevos hasta que una
-    página no aporte ninguno (fin del catálogo) o se corte por tiempo.
-
-    Antes esto dependía de encontrar el botón '.swiper-button-next' para saber
-    si seguir paginando. Muchos temas (First Hand, etc.) usan otra paginación,
-    así que el botón no aparecía y el scraper se quedaba en la página 1.
-    Ahora la señal de fin es puramente el contenido: si /page/N no trae ningún
-    producto nuevo respecto de lo ya visto, terminamos. El set 'vistos' hace
-    que una página repetida (algunos temas devuelven la última una y otra vez)
-    también cuente como 'sin nuevos' y corte el loop.
-    """
+    página no aporte ninguno o se corte por tiempo."""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     todos = []
     vistos = set()  # dedup compartido entre TODAS las páginas
     page = 1
     base_url = url.rstrip('/')
+    # Si le pasaron la home pelada (sin /productos ni una categoría), la home
+    # muestra solo destacados. Redirigimos al catálogo completo en /productos.
+    # Si ya trae una ruta específica (/productos, /categoria, etc.), la
+    # respetamos: el comerciante quiso comparar contra ESA categoría.
+    ruta = url.split('/')[3] if len(url.split('/')) > 3 else ''
+    if ruta.strip() == '':
+        base_url = f"https://{url.split('/')[2]}/productos"
     start_time = time.time()
     MAX_SECONDS = 80
     while page <= 25:
         if time.time() - start_time > MAX_SECONDS:
             break
-        page_url = f"{base_url}/page/{page}/" if page > 1 else url
+        page_url = f"{base_url}/page/{page}/" if page > 1 else f"{base_url}/"
         try:
             productos = scrape_page_static(page_url, headers, dominio, vistos)
         except Exception:
             break
         if not productos:
-            # Página sin productos NUEVOS (fin del catálogo o página repetida)
             break
         todos.extend(productos)
         page += 1
@@ -272,8 +250,6 @@ def scrape_ads_playwright(pagina):
             fragmento = texto_completo[inicio:inicio+500]
             copy = fragmento.replace('Platforms', '').replace('Open Dropdown', '').replace('See ad details', '').replace('This ad has multiple versions', '').replace('See summary details', '').replace('2 ads', '').strip()
             copy = re.sub(r'\s+', ' ', copy)[:250]
-            fragmento_antes = texto_completo[max(0, match.start()-200):match.start()]
-            nombre_pagina = pagina
             anuncios.append({
                 'id': ad_id,
                 'url': f"https://www.facebook.com/ads/library/?id={ad_id}",
@@ -290,10 +266,8 @@ def scrape():
         return jsonify({'error': 'URL requerida'}), 400
     try:
         dominio = get_dominio(url)
-        # Estrategia: intentamos SIEMPRE la paginación estática primero
-        # (rápida y cubre la mayoría de los temas de Tiendanube, con o sin
-        # botón de "siguiente" detectable). Solo si no trae NADA —tienda 100%
-        # dinámica que renderiza por JavaScript— caemos a Playwright.
+        # Intentamos SIEMPRE paginación estática primero (rápida, cubre la
+        # mayoría de temas). Solo si no trae NADA caemos a Playwright.
         productos = []
         if not is_dynamic_site(url):
             productos = scrape_with_pagination(url, dominio)
