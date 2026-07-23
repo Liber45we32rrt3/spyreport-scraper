@@ -14,13 +14,12 @@ Endpoints que usa el frontend (React) que ve el comerciante:
   POST   /webhooks/tiendanube                      → recibe webhooks de
                                                      Tiendanube (firma HMAC)
 
-Cómo enchufarlo (igual que el anterior):
+Cómo enchufarlo:
 
     from spyreport_api import api_bp
     app.register_blueprint(api_bp)
 
 Requiere en requirements.txt:  flask-cors
-(para que el frontend en Vercel pueda llamar a este backend en Railway)
 """
 
 import hashlib
@@ -60,9 +59,7 @@ def _store_token(store_id):
 def _get_todos_productos(store_id, token, max_paginas=20):
     """Trae TODO el catálogo propio del comerciante paginando la API oficial.
     Tiendanube devuelve como máximo 200 productos por página; iteramos hasta
-    que una página venga incompleta (última) o vacía. Sin esto, las tiendas
-    con más de 50 productos quedaban con la comparación incompleta.
-    """
+    que una página venga incompleta (última) o vacía."""
     todos = []
     page = 1
     while page <= max_paginas:
@@ -146,8 +143,50 @@ def borrar_competidor(store_id, comp_id):
 
 
 # ---------------------------------------------------------------------------
+# Histórico de precios
+# ---------------------------------------------------------------------------
+def _guardar_historial(store_id, competidores):
+    """Guarda un snapshot diario de precios de cada competidor.
+
+    Se llama en cada comparación, pero el índice único
+    (competidor_id, producto_url, fecha) hace que haya UNA fila por producto
+    por día: si el comerciante entra 5 veces, se actualiza la misma fila en
+    vez de duplicar. Con el tiempo esto arma la serie histórica que va a
+    alimentar el gráfico de evolución de precios.
+
+    Nunca rompe la respuesta: si falla el guardado, la comparación se
+    muestra igual.
+    """
+    filas = []
+    for c in competidores:
+        if c.get("error"):
+            continue
+        for p in c.get("productos", []):
+            url_prod = p.get("url") or ""
+            if not url_prod:
+                continue  # sin URL no podemos identificar el producto
+            filas.append({
+                "store_id": store_id,
+                "competidor_id": c["id"],
+                "producto_nombre": p.get("nombre", ""),
+                "producto_url": url_prod,
+                "precio": p.get("precio", 0),
+                "stock": p.get("stock", ""),
+            })
+
+    if not filas:
+        return
+
+    try:
+        sb().table("historial_precios").upsert(
+            filas, on_conflict="competidor_id,producto_url,fecha"
+        ).execute()
+    except Exception:
+        pass  # el histórico es best-effort, nunca bloquea la comparación
+
+
+# ---------------------------------------------------------------------------
 # Comparación: productos propios (API oficial) vs competidores (scraper)
-# Este es el endpoint del "momento wow" de los primeros 5 minutos.
 # ---------------------------------------------------------------------------
 @api_bp.route("/api/tiendas/<int:store_id>/comparacion", methods=["GET"])
 def comparacion(store_id):
@@ -212,6 +251,9 @@ def comparacion(store_id):
                 }
             )
 
+    # Guardamos snapshot histórico (no bloquea la respuesta si falla)
+    _guardar_historial(store_id, competidores)
+
     # 3. Resumen simple para mostrar arriba de todo
     precios_propios = [p["precio"] for p in propios if p["precio"] > 0]
     resumen = {
@@ -242,12 +284,6 @@ def comparacion(store_id):
 
 # ---------------------------------------------------------------------------
 # Suscripción: consulta Billing de Tiendanube, deriva estado y lo cachea
-#   - 200 + next_execution futura → "activa"
-#   - 200 + next_execution pasada → "vencida"
-#   - 404 (SubscriptionConcept not found) → "sin_suscripcion" (trial vencido
-#     o nunca pagó — verificado con la tienda demo)
-#   - cualquier otra cosa → "desconocido" (el frontend deja pasar: mejor
-#     dejar entrar con Billing caído que bloquear a un cliente que pagó)
 # ---------------------------------------------------------------------------
 def _consultar_suscripcion(store_id, token):
     """Consulta Billing y devuelve (estado, next_execution)."""
@@ -297,7 +333,6 @@ def estado_suscripcion(store_id):
 
     estado, next_exec = _consultar_suscripcion(store_id, token)
 
-    # Cachear en Supabase (si falla, no rompemos la respuesta)
     try:
         _actualizar_suscripcion_en_supabase(store_id, estado, next_exec)
     except Exception:
@@ -312,10 +347,6 @@ def estado_suscripcion(store_id):
 
 # ---------------------------------------------------------------------------
 # Webhook de Tiendanube: subscription/updated (+ suspended/resumed)
-# Estrategia: no confiamos en el contenido del evento; ante cualquier
-# notificación re-consultamos el estado real con _consultar_suscripcion().
-# Así los webhooks duplicados o desordenados no nos afectan (idempotente).
-# Respondemos 200 rápido: Tiendanube espera 2XX en menos de 3 segundos.
 # ---------------------------------------------------------------------------
 def _firma_valida(raw_body, firma_header):
     secret = os.environ.get("TIENDANUBE_CLIENT_SECRET", "")
@@ -337,7 +368,7 @@ def webhook_tiendanube():
     evento = data.get("event", "")
 
     if not store_id:
-        return jsonify({"ok": True}), 200  # nada que hacer
+        return jsonify({"ok": True}), 200
 
     if evento in ("subscription/updated", "app/suspended", "app/resumed"):
         token = _store_token(store_id)
@@ -346,6 +377,6 @@ def webhook_tiendanube():
                 estado, next_exec = _consultar_suscripcion(store_id, token)
                 _actualizar_suscripcion_en_supabase(store_id, estado, next_exec)
             except Exception:
-                pass  # nunca fallamos el 200: Tiendanube reintentaría 18 veces
+                pass  # nunca fallamos el 200
 
     return jsonify({"ok": True}), 200
